@@ -68,10 +68,14 @@ class Strategy(metaclass=ABCMeta):
     def _check_params(self, params):
         for k, v in params.items():
             if not hasattr(self, k):
-                raise AttributeError(
-                    f"Strategy '{self.__class__.__name__}' is missing parameter '{k}'."
-                    "Strategy class should define parameters as class variables before they "
-                    "can be optimized or run with.")
+                if k == 'data_g':
+                    # fixme, allow input data to run-function also from optimizer
+                    pass
+                else:
+                    raise AttributeError(
+                        f"Strategy '{self.__class__.__name__}' is missing parameter '{k}'."
+                        "Strategy class should define parameters as class variables before they "
+                        "can be optimized or run with.")
             setattr(self, k, v)
         return params
 
@@ -1250,9 +1254,10 @@ class Backtest:
                  return_heatmap: bool = False,
                  return_optimization: bool = False,
                  random_state: Optional[int] = None,
+                 extra_arg: Optional[dict] = None,
                  **kwargs) -> Union[pd.Series,
                                     Tuple[pd.Series, pd.Series],
-                                    Tuple[pd.Series, pd.Series, dict]]:
+                                    Tuple[pd.Series, pd.Series, dict, dict]]:
         """
         Optimize strategy parameters to an optimal combination.
         Returns result `pd.Series` of the best run.
@@ -1426,7 +1431,7 @@ class Backtest:
                         warnings.warn("For multiprocessing support in `Backtest.optimize()` "
                                       "set multiprocessing start method to 'fork'.")
                     for batch_index in _tqdm(range(len(param_batches))):
-                        _, values = Backtest._mp_task(backtest_uuid, batch_index)
+                        _, values = Backtest._mp_task(backtest_uuid, batch_index, extra_arg)
                         for value, params in zip(values, param_batches[batch_index]):
                             heatmap[tuple(params.values())] = value
             finally:
@@ -1437,9 +1442,9 @@ class Backtest:
             if pd.isnull(best_params):
                 # No trade was made in any of the runs. Just make a random
                 # run so we get some, if empty, results
-                stats = self.run(**param_combos[0])
+                stats = self.run(**param_combos[0], data_g=extra_arg)
             else:
-                stats = self.run(**dict(zip(heatmap.index.names, best_params)))
+                stats = self.run(**dict(zip(heatmap.index.names, best_params), data_g=extra_arg))
 
             if return_heatmap:
                 return stats, heatmap
@@ -1544,10 +1549,10 @@ class Backtest:
         return output
 
     @staticmethod
-    def _mp_task(backtest_uuid, batch_index):
+    def _mp_task(backtest_uuid, batch_index, extra_arg):
         bt, param_batches, maximize_func = Backtest._mp_backtests[backtest_uuid]
         return batch_index, [maximize_func(stats) if stats['# Trades'] else np.nan
-                             for stats in (bt.run(**params)
+                             for stats in (bt.run(**params, data_g=extra_arg)
                                            for params in param_batches[batch_index])]
 
     _mp_backtests: Dict[float, Tuple['Backtest', List, Callable]] = {}
